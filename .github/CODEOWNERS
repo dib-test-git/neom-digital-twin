@@ -1,0 +1,19 @@
+# Default owners for everything in the repo
+*                                   @neom-cityops-leads @neom-platform-data
+
+# Ingestion + streaming
+/services/ingestion/                @neom-platform-data
+/services/anomaly-detection/        @neom-platform-data @neom-ml-platform
+
+# Edge / industrial integrations (OPC-UA, BMS gateways)
+/services/pod-adapter/              @neom-cityops-leads @neom-edge-integration
+
+# Operator-facing UI
+/web/operator-console/              @neom-cityops-leads @neom-frontend
+
+# Infra / multi-AZ wiring — safety-critical, requires CityOps sign-off
+/infra/                             @neom-platform-data @neom-cityops-leads
+/docs/runbooks/                     @neom-cityops-leads
+
+# Pull-request + CI plumbing
+/.github/                           @neom-platform-data
