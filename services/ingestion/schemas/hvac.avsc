@@ -1,0 +1,16 @@
+{
+  "type": "record",
+  "namespace": "neom.theline.bms",
+  "name": "HvacReading",
+  "doc": "Normalized HVAC reading sourced from a per-module OPC-UA gateway.",
+  "fields": [
+    {"name": "module", "type": "int"},
+    {"name": "floor",  "type": "int"},
+    {"name": "loop",   "type": {"type": "enum", "name": "Loop", "symbols": ["supply", "return", "bypass"]}},
+    {"name": "tag",    "type": "string"},
+    {"name": "value",  "type": "double"},
+    {"name": "unit",   "type": "string", "default": "c"},
+    {"name": "ts_ms",  "type": "long"},
+    {"name": "quality", "type": {"type": "enum", "name": "Quality", "symbols": ["good", "uncertain", "bad"]}, "default": "good"}
+  ]
+}

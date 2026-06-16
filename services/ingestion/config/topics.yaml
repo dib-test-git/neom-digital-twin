@@ -1,0 +1,36 @@
+# Kafka topic config per environment.
+# Applied by infra/kafka.tf via the cluster bootstrap script.
+
+defaults:
+  replication_factor: 3
+  min_insync_replicas: 2
+
+topics:
+  - name: the-line.bms.hvac.raw
+    partitions: 64
+    retention_ms: 604800000    # 7 days
+    cleanup_policy: delete
+    safety_critical: false
+
+  - name: the-line.bms.hvac.normalized
+    partitions: 64
+    retention_ms: 2592000000   # 30 days
+    cleanup_policy: delete
+
+  - name: the-line.bms.hvac.alerts
+    partitions: 12
+    retention_ms: 2592000000
+
+  - name: the-line.pods.telemetry
+    partitions: 32
+    retention_ms: 604800000
+
+  # KAN-28: safety-critical streams MUST be isolated to a dedicated cluster
+  # and replicated cross-AZ. Do not co-locate with non-safety topics.
+  - name: the-line.safety.fire-life
+    partitions: 24
+    retention_ms: 7776000000   # 90 days
+    cleanup_policy: delete
+    safety_critical: true
+    replication_factor: 5
+    min_insync_replicas: 3
