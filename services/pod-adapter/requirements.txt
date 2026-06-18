@@ -1,0 +1,6 @@
+asyncua==1.1.5
+confluent-kafka==2.5.0
+pydantic==2.7.1
+structlog==24.1.0
+prometheus-client==0.20.0
+tenacity==8.2.3
