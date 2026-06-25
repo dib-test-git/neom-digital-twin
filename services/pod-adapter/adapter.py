@@ -3,7 +3,8 @@
 One adapter instance per corridor (A/B/C). Subscribes to the pod
 controller's OPC-UA node space and republishes events to Kafka.
 
-KAN-27.
+KAN-27 — base adapter.
+KAN-50 — failover retry buffer integration (see retry_buffer.py).
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from dataclasses import dataclass
 
 from asyncua import Client, ua
 from confluent_kafka import Producer
+
+from retry_buffer import RetryBuffer
 
 log = logging.getLogger("the-line.pod-adapter")
 
@@ -36,10 +39,19 @@ POD_TAGS: list[str] = [
 @dataclass
 class AdapterConfig:
     corridor: str
-    opcua_url: str
+    primary_url: str
+    standby_url: str
     bootstrap: str
     topic: str = "the-line.pods.telemetry"
     sample_hz: float = 10.0
+
+
+def _publish(producer: Producer, topic: str, corridor: str, payload: dict) -> None:
+    producer.produce(
+        topic,
+        key=corridor.encode(),
+        value=json.dumps(payload, default=str).encode(),
+    )
 
 
 async def run(cfg: AdapterConfig) -> None:
@@ -54,31 +66,48 @@ async def run(cfg: AdapterConfig) -> None:
         }
     )
 
-    log.info("connecting corridor=%s url=%s", cfg.corridor, cfg.opcua_url)
-    async with Client(url=cfg.opcua_url) as client:
-        nodes = {t: client.get_node(f"ns=5;s={t}") for t in POD_TAGS}
-        period = 1.0 / cfg.sample_hz
-        while True:
-            try:
-                values = await client.read_values(list(nodes.values()))
-            except (ua.UaError, ConnectionError) as exc:
-                log.warning("opcua read failed: %s — failing over", exc)
-                await asyncio.sleep(0.5)
-                continue
-            payload = {"corridor": cfg.corridor, **dict(zip(POD_TAGS, values))}
-            producer.produce(
-                cfg.topic,
-                key=cfg.corridor.encode(),
-                value=json.dumps(payload, default=str).encode(),
-            )
-            producer.poll(0)
-            await asyncio.sleep(period)
+    buffer = RetryBuffer(max_samples=5000, max_age_seconds=30.0)
+    url = cfg.primary_url
+    period = 1.0 / cfg.sample_hz
+
+    while True:
+        log.info("connecting corridor=%s url=%s", cfg.corridor, url)
+        try:
+            async with Client(url=url) as client:
+                nodes = {t: client.get_node(f"ns=5;s={t}") for t in POD_TAGS}
+
+                # Drain any samples accumulated during the failover window.
+                for buffered in buffer.drain():
+                    _publish(producer, cfg.topic, buffered.corridor, buffered.payload)
+
+                while True:
+                    try:
+                        values = await client.read_values(list(nodes.values()))
+                    except (ua.UaError, ConnectionError) as exc:
+                        log.warning("opcua read failed on %s: %s — failing over", url, exc)
+                        break
+                    payload = {"corridor": cfg.corridor, **dict(zip(POD_TAGS, values))}
+                    try:
+                        _publish(producer, cfg.topic, cfg.corridor, payload)
+                        producer.poll(0)
+                    except BufferError:
+                        # Producer queue full — buffer locally and retry next tick.
+                        buffer.push(cfg.corridor, payload)
+                    await asyncio.sleep(period)
+        except Exception as exc:  # pragma: no cover — top-level safety net
+            log.error("adapter session error: %s", exc, exc_info=True)
+
+        # Failover: swap URLs and try again after a short backoff.
+        url = cfg.standby_url if url == cfg.primary_url else cfg.primary_url
+        log.info("failing over to %s (buffered=%d)", url, len(buffer))
+        await asyncio.sleep(0.5)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--corridor", required=True, choices=["A", "B", "C"])
-    ap.add_argument("--opcua-url", required=True)
+    ap.add_argument("--primary-url", required=True)
+    ap.add_argument("--standby-url", required=True)
     ap.add_argument(
         "--bootstrap", default=os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
     )
@@ -88,7 +117,8 @@ def main() -> None:
 
     cfg = AdapterConfig(
         corridor=args.corridor,
-        opcua_url=args.opcua_url,
+        primary_url=args.primary_url,
+        standby_url=args.standby_url,
         bootstrap=args.bootstrap,
         sample_hz=args.sample_hz,
     )
